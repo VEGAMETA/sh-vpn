@@ -1,0 +1,29 @@
+# Debian hardening for hosts this repo fully owns (nl-exit). ru-entry's base is botato's.
+# The firewall and fwknop are tagged `firewall`: on a fresh server run with
+# `--skip-tags firewall` first, then `--tags firewall` after review.
+- name: Base
+  hosts: nl
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Knock (fwknop SPA) so SSH is reachable
+      ansible.builtin.include_tasks:
+        file: tasks/knock.yml
+        apply:
+          tags: [always]
+      tags: [always]
+
+    - name: Gather facts
+      ansible.builtin.setup:
+      tags: [always]
+
+  roles:
+    - role: base
+      tags: [base]
+    - role: bbr
+      tags: [base, bbr]
+    - role: fwknop
+      tags: [firewall, fwknop]
+    - role: firewall
+      tags: [firewall]

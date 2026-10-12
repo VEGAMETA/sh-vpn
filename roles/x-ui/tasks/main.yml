@@ -1,0 +1,155 @@
+# 3x-ui from the pinned release tarball (checksum-verified). The panel and the subscription
+# server listen on 127.0.0.1 only; inbounds/outbounds/routing are set by hand in the panel
+# (docs/ru-entry-panel.md) and live in /etc/x-ui/x-ui.db.
+- name: Installed version
+  ansible.builtin.command: /usr/local/x-ui/x-ui -v
+  register: xui_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install {{ xui_version }}
+  when: xui_installed.stdout | trim != xui_version | regex_replace('^v', '')
+  block:
+    - name: Back up the database before an upgrade
+      ansible.builtin.shell: |
+        [ -f /etc/x-ui/x-ui.db ] || exit 0
+        install -d -m 0700 /var/backups/x-ui
+        sqlite_backup=/var/backups/x-ui/x-ui.db.$(date +%Y%m%d-%H%M%S)
+        cp -p /etc/x-ui/x-ui.db "$sqlite_backup"
+        echo "$sqlite_backup"
+      register: xui_backup
+      changed_when: xui_backup.stdout | length > 0
+
+    - name: Download
+      ansible.builtin.get_url:
+        url: https://github.com/MHSanaei/3x-ui/releases/download/{{ xui_version }}/x-ui-linux-amd64.tar.gz
+        dest: /root/x-ui-linux-amd64.tar.gz
+        checksum: sha256:{{ xui_sha256 }}
+        mode: "0600"
+
+    - name: Stop the panel
+      ansible.builtin.systemd:
+        name: x-ui
+        state: stopped
+      failed_when: false
+
+    # Drops the geodata marker too, so "Geodata present" below swaps in runetfreedom builds again.
+    - name: Unpack
+      ansible.builtin.shell: |
+        set -e
+        rm -rf /root/x-ui-new
+        mkdir /root/x-ui-new
+        tar xzf /root/x-ui-linux-amd64.tar.gz -C /root/x-ui-new --no-same-owner
+        rm -rf /usr/local/x-ui
+        mv /root/x-ui-new/x-ui /usr/local/x-ui
+        chmod 0755 /usr/local/x-ui/x-ui /usr/local/x-ui/bin/xray-linux-amd64
+        rm -rf /root/x-ui-new /root/x-ui-linux-amd64.tar.gz
+        install -d -m 0700 /etc/x-ui
+
+    - name: systemd unit
+      ansible.builtin.copy:
+        src: /usr/local/x-ui/x-ui.service.debian
+        dest: /etc/systemd/system/x-ui.service
+        remote_src: true
+        mode: "0644"
+
+    - name: Migrate the database
+      ansible.builtin.command: /usr/local/x-ui/x-ui migrate
+
+# Root runs these binaries: nobody else may own them.
+- name: Install dir owned by root
+  ansible.builtin.file:
+    path: /usr/local/x-ui
+    owner: root
+    group: root
+    recurse: true
+
+- name: Panel settings
+  ansible.builtin.shell: /usr/local/x-ui/x-ui setting -show; /usr/local/x-ui/x-ui setting -getListen
+  register: xui_show
+  changed_when: false
+
+- name: Panel on 127.0.0.1 with vault credentials
+  when: >-
+    'hasDefaultCredential: true' in xui_show.stdout
+    or ('port: ' ~ vault_xui_port) not in xui_show.stdout_lines
+    or ('webBasePath: ' ~ vault_xui_web_base_path) not in xui_show.stdout_lines
+    or 'listenIP: 127.0.0.1' not in xui_show.stdout_lines
+    or xui_reset_credentials | default(false) | bool
+  ansible.builtin.command: >-
+    /usr/local/x-ui/x-ui setting
+    -port {{ vault_xui_port }}
+    -webBasePath {{ vault_xui_web_base_path }}
+    -listenIP 127.0.0.1
+    -username {{ vault_xui_username }}
+    -password {{ vault_xui_password }}
+  no_log: true
+  notify: Restart x-ui
+
+# Not exposed by `x-ui setting`: write the keys straight into the settings table.
+# Subscriptions come from roles/vpn-sub (static files behind botato's Caddy), so 3x-ui's own
+# subscription server is off.
+- name: Subscription server off (and on 127.0.0.1 if ever enabled)
+  ansible.builtin.script:
+    cmd: xui-settings.py subEnable=false subListen=127.0.0.1 subPort={{ vault_xui_sub_port }}
+    executable: python3
+  register: xui_sub
+  changed_when: "'changed' in xui_sub.stdout"
+  notify: Restart x-ui
+
+- name: Geodata update script
+  ansible.builtin.template:
+    src: vpn-geodata-update.sh.j2
+    dest: /usr/local/sbin/vpn-geodata-update
+    mode: "0755"
+
+- name: Geodata update timer
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    content: "{{ item.content }}"
+    mode: "0644"
+  loop:
+    - name: vpn-geodata-update.service
+      content: |
+        # Managed by Ansible (vpn).
+        [Unit]
+        Description=Refresh geoip/geosite (runetfreedom) for 3x-ui
+        Wants=network-online.target
+        After=network-online.target
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/sbin/vpn-geodata-update
+    - name: vpn-geodata-update.timer
+      content: |
+        # Managed by Ansible (vpn).
+        [Unit]
+        Description=Weekly geodata refresh
+
+        [Timer]
+        OnCalendar=Mon *-*-* 04:30
+        RandomizedDelaySec=30m
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+
+- name: Geodata present
+  ansible.builtin.command: /usr/local/sbin/vpn-geodata-update --no-restart
+  args:
+    creates: /usr/local/x-ui/bin/.geodata-runetfreedom
+  notify: Restart x-ui
+
+- name: Timer enabled
+  ansible.builtin.systemd:
+    name: vpn-geodata-update.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Panel running
+  ansible.builtin.systemd:
+    name: x-ui
+    enabled: true
+    state: started
+    daemon_reload: true

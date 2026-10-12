@@ -1,0 +1,2 @@
+- name: Apply sysctl
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/90-bbr.conf

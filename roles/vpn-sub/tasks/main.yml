@@ -1,0 +1,47 @@
+# Static subscription files, one per person, rendered locally from the vault by
+# scripts/vpnctl.py. botato's Caddy serves /opt/vpn-sub read-only at
+# https://<relay domain>/s/<token> (no directory listing: an unknown token is a 404).
+- name: Subscription bodies
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command: python3 {{ playbook_dir }}/../scripts/vpnctl.py sub {{ item.name }}
+  loop: "{{ vault_family }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: vpn_sub_bodies
+  changed_when: false
+  no_log: true
+
+- name: Directory
+  ansible.builtin.file:
+    path: /opt/vpn-sub
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Files
+  ansible.builtin.copy:
+    dest: "/opt/vpn-sub/{{ item.item.sub }}"
+    content: "{{ item.stdout }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ vpn_sub_bodies.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  no_log: true
+
+- name: Existing files
+  ansible.builtin.find:
+    paths: /opt/vpn-sub
+  register: vpn_sub_existing
+
+- name: Remove files of people no longer in the vault
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ vpn_sub_existing.files }}"
+  when: item.path | basename not in (vault_family | map(attribute='sub') | list)
+  loop_control:
+    label: stale subscription

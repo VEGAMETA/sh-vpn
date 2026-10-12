@@ -1,0 +1,30 @@
+#!/bin/sh
+# Managed by Ansible (vpn). Replaces 3x-ui's geoip.dat/geosite.dat with runetfreedom builds
+# (geoip:ru, geosite:category-ru and more) after checking their published sha256.
+# --no-restart: leave restarting x-ui to the caller.
+set -eu
+BASE={{ geodata_base_url }}
+DIR=/usr/local/x-ui/bin
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+for f in geoip.dat geosite.dat; do
+	curl -fsSL --retry 3 -o "$TMP/$f" "$BASE/$f"
+	curl -fsSL --retry 3 -o "$TMP/$f.sha256sum" "$BASE/$f.sha256sum"
+	want=$(awk '{print $1}' "$TMP/$f.sha256sum")
+	have=$(sha256sum "$TMP/$f" | awk '{print $1}')
+	[ "$want" = "$have" ] || { echo "$f: checksum mismatch" >&2; exit 1; }
+done
+
+changed=0
+for f in geoip.dat geosite.dat; do
+	if ! cmp -s "$TMP/$f" "$DIR/$f"; then
+		install -m 0644 "$TMP/$f" "$DIR/$f"
+		changed=1
+	fi
+done
+touch "$DIR/.geodata-runetfreedom"
+
+if [ "$changed" = 1 ] && [ "${1:-}" != --no-restart ]; then
+	systemctl restart x-ui
+fi

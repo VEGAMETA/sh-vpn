@@ -1,0 +1,1 @@
+xray_config_template: "{{ playbook_dir }}/../templates/nl-exit.config.json.j2"

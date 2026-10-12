@@ -1,0 +1,19 @@
+- name: Import base
+  ansible.builtin.import_playbook: base.yml
+
+- name: nl-exit
+  hosts: nl
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Knock (fwknop SPA) so SSH is reachable
+      ansible.builtin.include_tasks:
+        file: tasks/knock.yml
+        apply:
+          tags: [always]
+      tags: [always]
+
+  roles:
+    - role: xray
+      tags: [xray]

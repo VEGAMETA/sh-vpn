@@ -1,0 +1,98 @@
+# Bare Xray from the pinned release zip (checksum-verified), run as an unprivileged user.
+- name: System user
+  ansible.builtin.user:
+    name: xray
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+
+- name: Installed version
+  ansible.builtin.shell: /usr/local/bin/xray version 2>/dev/null | awk 'NR==1{print "v"$2}'
+  register: xray_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install {{ xray_version }}
+  when: xray_installed.stdout != xray_version
+  block:
+    - name: Download
+      ansible.builtin.get_url:
+        url: https://github.com/XTLS/Xray-core/releases/download/{{ xray_version }}/Xray-linux-64.zip
+        dest: /root/Xray-linux-64.zip
+        checksum: sha256:{{ xray_sha256 }}
+        mode: "0600"
+
+    # python3 -m zipfile: no unzip package on a minimal image.
+    - name: Unpack
+      ansible.builtin.shell: |
+        rm -rf /root/xray-dist
+        python3 -m zipfile -e /root/Xray-linux-64.zip /root/xray-dist
+        install -m 0755 /root/xray-dist/xray /usr/local/bin/xray
+        install -d -m 0755 /usr/local/share/xray
+        install -m 0644 /root/xray-dist/geoip.dat /root/xray-dist/geosite.dat /usr/local/share/xray/
+        rm -rf /root/xray-dist /root/Xray-linux-64.zip
+      notify: Restart xray
+
+- name: Config dir
+  ansible.builtin.file:
+    path: /usr/local/etc/xray
+    state: directory
+    owner: root
+    group: xray
+    mode: "0750"
+
+# Xray picks the format from the extension, so validate a copy named *.json.
+- name: config.json
+  ansible.builtin.template:
+    src: "{{ xray_config_template }}"
+    dest: /usr/local/etc/xray/config.json
+    owner: root
+    group: xray
+    mode: "0640"
+    validate: sh -c 'cp %s /tmp/xray-test.json && XRAY_LOCATION_ASSET=/usr/local/share/xray /usr/local/bin/xray run -test -c /tmp/xray-test.json; rc=$?; rm -f /tmp/xray-test.json; exit $rc'
+  notify: Restart xray
+
+- name: systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/xray.service
+    content: |
+      # Managed by Ansible (vpn).
+      [Unit]
+      Description=Xray
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=xray
+      Group=xray
+      Environment=XRAY_LOCATION_ASSET=/usr/local/share/xray
+      ExecStart=/usr/local/bin/xray run -c /usr/local/etc/xray/config.json
+      Restart=on-failure
+      RestartSec=5s
+      LimitNOFILE=1048576
+      AmbientCapabilities=CAP_NET_BIND_SERVICE
+      CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ProtectHome=true
+      PrivateTmp=true
+      PrivateDevices=true
+      ProtectKernelTunables=true
+      ProtectKernelModules=true
+      ProtectControlGroups=true
+      RestrictNamespaces=true
+      LockPersonality=true
+      MemoryDenyWriteExecute=true
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+  notify: Restart xray
+
+- name: Xray running
+  ansible.builtin.systemd:
+    name: xray
+    enabled: true
+    state: started
+    daemon_reload: true

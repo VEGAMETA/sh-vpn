@@ -1,0 +1,5 @@
+- name: Import nl-exit
+  ansible.builtin.import_playbook: nl-exit.yml
+
+- name: Import ru-entry
+  ansible.builtin.import_playbook: ru-entry.yml

@@ -1,0 +1,5 @@
+- name: Restart x-ui
+  ansible.builtin.systemd:
+    name: x-ui
+    state: restarted
+    daemon_reload: true

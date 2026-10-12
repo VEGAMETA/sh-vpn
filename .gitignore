@@ -1,0 +1,8 @@
+*.db
+*.key
+.vault_pass
+out/
+*.retry
+*.plain.yml
+__pycache__/
+*.pyc

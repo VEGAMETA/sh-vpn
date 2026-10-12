@@ -1,0 +1,69 @@
+{#- Managed by Ansible (vpn). Two inbounds, both VLESS + XHTTP + Reality (no flow with XHTTP):
+    "link"  — the cascade from ru-entry, port {{ link_port }}, open to ru-entry only (nftables);
+    "entry" — the public fallback entry on 443 for family clients. -#}
+{%- set sniffing = {"enabled": true, "destOverride": ["http", "tls", "quic"], "routeOnly": true} -%}
+{%- set family_clients = [{"id": vault_check_uuid, "email": "check"}] -%}
+{%- for m in vault_family -%}
+{%-   set _ = family_clients.append({"id": m.uuid, "email": m.name}) -%}
+{%- endfor -%}
+{%- set config = {
+  "log": {"loglevel": "warning", "access": "none"},
+  "policy": {"levels": {"0": {"connIdle": xray_conn_idle | int}}},
+  "inbounds": [
+    {
+      "tag": "link",
+      "listen": "0.0.0.0",
+      "port": link_port | int,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{"id": vault_link_uuid, "email": "ru-entry"}],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {"path": vault_link_path, "mode": "auto"},
+        "security": "reality",
+        "realitySettings": {
+          "target": link_reality_target ~ ":443",
+          "serverNames": [link_reality_target],
+          "privateKey": vault_link_reality_private_key,
+          "shortIds": [vault_link_short_id]
+        }
+      },
+      "sniffing": sniffing
+    },
+    {
+      "tag": "entry",
+      "listen": "0.0.0.0",
+      "port": 443,
+      "protocol": "vless",
+      "settings": {
+        "clients": family_clients,
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {"path": vault_fallback_path, "mode": "auto"},
+        "security": "reality",
+        "realitySettings": {
+          "target": fallback_reality_target ~ ":443",
+          "serverNames": [fallback_reality_target],
+          "privateKey": vault_fallback_reality_private_key,
+          "shortIds": [vault_fallback_short_id]
+        }
+      },
+      "sniffing": sniffing
+    }
+  ],
+  "outbounds": [
+    {"tag": "direct", "protocol": "freedom", "streamSettings": {"sockopt": {"domainStrategy": "UseIPv4"}}},
+    {"tag": "block", "protocol": "blackhole"}
+  ],
+  "routing": {
+    "rules": [
+      {"ip": ["geoip:private"], "outboundTag": "block"},
+      {"protocol": ["bittorrent"], "outboundTag": "block"}
+    ]
+  }
+} -%}
+{{ config | to_nice_json(indent=2) }}

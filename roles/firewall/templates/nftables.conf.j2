@@ -1,0 +1,38 @@
+#!/usr/sbin/nft -f
+# Managed by Ansible (vpn). Only our table is replaced, no `flush ruleset`.
+
+table inet vpn
+delete table inet vpn
+
+table inet vpn {
+	# Filled by fwknopd after a valid SPA packet.
+	set ssh_allowed {
+		type ipv4_addr
+		flags timeout
+	}
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		ct state established,related accept
+		ct state invalid drop
+		iif lo accept
+
+		# ICMP the network needs (PMTU discovery, errors, IPv6 neighbor discovery).
+		ip protocol icmp icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+		ip6 nexthdr icmpv6 icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+
+{% for port in firewall_tcp_public | default([]) %}
+		tcp dport {{ port }} accept
+{% endfor %}
+{% for r in firewall_tcp_restricted | default([]) %}
+		tcp dport {{ r.port }} ip saddr {{ r.from }} accept
+{% endfor %}
+
+		# fwknopd (Debian builds it without pcap: a plain UDP listener that never replies).
+		udp dport {{ fwknop_port }} accept
+
+		# SSH only for addresses that knocked.
+		tcp dport {{ ssh_port }} ip saddr @ssh_allowed accept
+	}
+}

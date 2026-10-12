@@ -1,0 +1,10 @@
+fwknop_stanza: nl-exit
+
+# Reality dest for each inbound (European, TLS 1.3 + h2, not behind a CDN, reachable from Russia;
+# see scripts/reality-dest-scan.md). www.surf.nl was dropped: TSPU blocks it by SNI (2026-10-12).
+fallback_reality_target: www.transip.nl
+link_reality_target: www.utwente.nl
+
+firewall_tcp_public: [443]
+firewall_tcp_restricted:
+  - { port: "{{ link_port }}", from: "{{ ru_ip }}" }

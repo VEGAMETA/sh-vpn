@@ -1,0 +1,27 @@
+# ru-entry shares the VPS with the botato relay: users, sshd, nftables and fwknop are
+# botato's (H:\Desktop\botato\infra\ansible). Inbounds, outbounds and routing live in the
+# panel's database and are applied by `scripts/vpnctl.py panel-apply` (docs/ru-entry-panel.md).
+- name: ru-entry
+  hosts: ru
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Knock (fwknop SPA) so SSH is reachable
+      ansible.builtin.include_tasks:
+        file: tasks/knock.yml
+        apply:
+          tags: [always]
+      tags: [always]
+
+    - name: Gather facts
+      ansible.builtin.setup:
+      tags: [always]
+
+  roles:
+    - role: bbr
+      tags: [bbr]
+    - role: x-ui
+      tags: [x-ui]
+    - role: vpn-sub
+      tags: [sub]

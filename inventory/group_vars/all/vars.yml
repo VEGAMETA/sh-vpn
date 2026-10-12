@@ -1,0 +1,39 @@
+ansible_user: deploy
+ansible_ssh_private_key_file: ~/.ssh/deploy_ed25519
+
+ru_ip: "{{ vault_ru_ip }}"
+nl_ip: "{{ vault_nl_ip }}"
+link_port: "{{ vault_link_port }}"
+
+# Pinned. Upgrade only on request, after reading the changelog.
+# 3x-ui v3.9.0 bundles Xray v26.9.30: keep both nodes on the same core.
+xray_version: v26.9.30
+xray_sha256: f851110beaff16e78d643f0ccfd9524b4a44dfd59bae3e34bb52bba378f7690e
+xui_version: v3.9.0
+xui_sha256: d7cbe0bf6358ee0d2117c24fd2efb483502e411d38e2ea59bd0bf5e7a3e39390
+
+# Client side of every REALITY connection (family profiles and the ru-entry -> nl-exit link).
+# Xray >= 26.9.8 REALITY accepts only ClientHellos with X25519MLKEM768, i.e. uTLS chrome,
+# firefox or safari; TSPU scores chrome/safari/iOS as suspicious (2026). Changing it means
+# re-running `scripts/vpnctl.py panel-apply` and the ru-entry playbook (subscriptions).
+client_fingerprint: firefox
+
+# XHTTP connection pool (client side; servers ignore it). TSPU freezes all TLS to a datacenter
+# IP after a burst of >3 parallel handshakes, so keep the pool small. Setting any xmux field
+# turns the other defaults off, hence the explicit rotation values.
+xhttp_xmux:
+  maxConnections: 2
+  hMaxRequestTimes: "600-900"
+  hMaxReusableSecs: "1800-3000"
+
+# Seconds an idle connection is kept (long SSH sessions etc.; Xray's default is 300).
+xray_conn_idle: 3600
+
+# Geodata with Russian categories, refreshed weekly on ru-entry.
+geodata_base_url: https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download
+
+ssh_port: 22
+fwknop_port: 62201
+# ~/.fwknoprc on the control machine (WSL) holds the SPA keys, one stanza per host.
+fwknop_rc: "{{ lookup('env', 'HOME') }}/.fwknoprc"
+firewall_rollback_secs: 180
