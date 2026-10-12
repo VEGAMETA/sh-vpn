@@ -9,8 +9,9 @@ scripts/vpnctl.py panel-apply      # from WSL in the repo root; idempotent
 ```
 
 It backs up `x-ui.db` to `/var/backups/x-ui/`, mints an API token (`x-ui setting -getApiToken`),
-talks to the panel through an SSH tunnel, restarts Xray and prints a secret-free summary of the
-generated `/usr/local/x-ui/bin/config.json`. Expected summary:
+talks to the panel through an SSH tunnel, restarts Xray only if something changed (a restart drops
+every live session and blinks the botato relay) and prints a secret-free summary of the generated
+`/usr/local/x-ui/bin/config.json`. Expected summary:
 
 ```
 inbound api            127.0.0.1:62789 -     clients=0 flows=['-'] fallbacks=[]

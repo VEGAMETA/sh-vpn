@@ -284,6 +284,12 @@ def panel_apply():
             return {**c, "flow": flow, "limitIp": 0, "totalGB": 0, "expiryTime": 0, "enable": True,
                     "tgId": "", "subId": secrets.token_hex(8), "reset": 0}
 
+        changes = []
+
+        def done(msg):
+            changes.append(msg)
+            print(msg)
+
         have = inbounds()
         # 1. Vision inbound on 443 (created once; clients are reconciled in step 3).
         vis = p["vision"]
@@ -299,7 +305,7 @@ def panel_apply():
                 "settings": json.dumps({"clients": [new_client(c, "xtls-rprx-vision") for c in vis["settings"]["clients"][:1]],
                                         "decryption": "none", "fallbacks": []}),
                 "streamSettings": json.dumps(stream), "sniffing": json.dumps(vis["sniffing"])})
-            print(f"inbound {VISION_TAG}: created")
+            done(f"inbound {VISION_TAG}: created")
         # 2. XHTTP inbound on loopback, reached only through the Vision inbound's fallback.
         xh = p["xhttp"]
         if XHTTP_TAG not in have:
@@ -309,7 +315,7 @@ def panel_apply():
                 # Empty: emails must be unique, so people are attached in step 3.
                 "settings": json.dumps({"clients": [], "decryption": "none"}),
                 "streamSettings": json.dumps(xh["streamSettings"]), "sniffing": json.dumps(xh["sniffing"])})
-            print(f"inbound {XHTTP_TAG}: created")
+            done(f"inbound {XHTTP_TAG}: created")
         have = inbounds()
         vid, xid = have[VISION_TAG]["id"], have[XHTTP_TAG]["id"]
         # 3. Every person on both inbounds (one client record, flow per inbound).
@@ -318,13 +324,13 @@ def panel_apply():
             email = c["email"]
             if email not in on_vision and email not in on_xhttp:
                 api("/clients/add", body={"client": new_client(c, "xtls-rprx-vision"), "inboundIds": [vid, xid]})
-                print(f"client {email}: created on both inbounds")
+                done(f"client {email}: created on both inbounds")
             elif email not in on_vision:
                 api(f"/clients/{urllib.parse.quote(email)}/attach", body={"inboundIds": [vid]})
-                print(f"client {email}: attached to {VISION_TAG}")
+                done(f"client {email}: attached to {VISION_TAG}")
             elif email not in on_xhttp:
                 api(f"/clients/{urllib.parse.quote(email)}/attach", body={"inboundIds": [xid]})
-                print(f"client {email}: attached to {XHTTP_TAG}")
+                done(f"client {email}: attached to {XHTTP_TAG}")
         # 4. The fallback from the Vision inbound to the XHTTP inbound. One bare rule: in Xray a
         # fallback's "name" is the SNI it matches, not a label, so it must stay empty.
         want = [{"childId": xid, "name": "", "alpn": "", "path": "", "dest": p["fallback_dest"],
@@ -334,7 +340,7 @@ def panel_apply():
         if [tuple(f.get(k) or "" if k not in ("childId", "xver") else f.get(k) or 0 for k in key) for f in cur] != \
                 [tuple(f[k] for k in key) for f in want]:
             api(f"/inbounds/{vid}/fallbacks", body={"fallbacks": want})
-            print(f"fallback {VISION_TAG} -> {p['fallback_dest']}: set")
+            done(f"fallback {VISION_TAG} -> {p['fallback_dest']}: set")
 
         # 5. Xray template: link outbound, routing, DNS, idle timeout. The response is
         # {xraySetting, inboundTags, ...}, possibly as a JSON string; only xraySetting is the template.
@@ -360,12 +366,14 @@ def panel_apply():
         new.setdefault("policy", {}).setdefault("levels", {}).setdefault("0", {})["connIdle"] = p["conn_idle"]
         if new != cfg:
             api("/xray/update", form={"xraySetting": json.dumps(new)})
-            print("xray template: updated")
+            done("xray template: updated")
+        if changes:
+            # A full restart: hot-applied outbounds keep pooled connections built with old settings.
+            api("/server/restartXrayService", form={})
+            print("xray: restarted")
         else:
-            print("xray template: unchanged")
-        # A full restart: hot-applied outbounds keep pooled connections built with old settings.
-        api("/server/restartXrayService", form={})
-        print("xray: restarted")
+            # Restarting would drop every live VPN session and blink the botato relay for nothing.
+            print("nothing changed; xray not restarted")
     finally:
         tunnel.terminate()
     time.sleep(3)
